@@ -9,12 +9,6 @@ namespace {
 
 class OverrideVisitor : public clang::RecursiveASTVisitor<OverrideVisitor> {
 public:
-  explicit OverrideVisitor(clang::ASTContext *context)
-      : Diag(context->getDiagnostics()) {
-
-    WarnID = Diag.getCustomDiagID(clang::DiagnosticsEngine::Warning,
-                                  "virtual method is not marked 'override'");
-  }
 
   bool VisitCXXMethodDecl(clang::CXXMethodDecl *MD) {
 
@@ -30,19 +24,18 @@ public:
     if (MD->hasAttr<clang::OverrideAttr>())
       return true;
 
+    auto &Diag = MD->getASTContext().getDiagnostics();
+    unsigned WarnID = Diag.getCustomDiagID(
+      clang::DiagnosticsEngine::Warning,
+      "virtual method is not marked 'override'");
     Diag.Report(MD->getLocation(), WarnID) << MD;
 
     return true;
   }
-
-private:
-  clang::DiagnosticsEngine &Diag;
-  unsigned WarnID;
 };
 
 class OverrideConsumer : public clang::ASTConsumer {
 public:
-  explicit OverrideConsumer(clang::ASTContext *context) : m_visitor(context) {}
 
   void HandleTranslationUnit(clang::ASTContext &Context) override {
     m_visitor.TraverseDecl(Context.getTranslationUnitDecl());
@@ -56,7 +49,7 @@ class OverrideAction : public clang::PluginASTAction {
 protected:
   std::unique_ptr<clang::ASTConsumer>
   CreateASTConsumer(clang::CompilerInstance &CI, llvm::StringRef) override {
-    return std::make_unique<OverrideConsumer>(&CI.getASTContext());
+    return std::make_unique<OverrideConsumer>();
   }
 
   bool ParseArgs(const clang::CompilerInstance &CI,
