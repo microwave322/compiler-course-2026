@@ -10,7 +10,7 @@ namespace {
 class OverrideVisitor : public clang::RecursiveASTVisitor<OverrideVisitor> {
 public:
   explicit OverrideVisitor(clang::ASTContext *context)
-      : Context(context), Diag(context->getDiagnostics()) {
+      : Diag(context->getDiagnostics()) {
 
     WarnID = Diag.getCustomDiagID(clang::DiagnosticsEngine::Warning,
                                   "virtual method is not marked 'override'");
@@ -36,7 +36,6 @@ public:
   }
 
 private:
-  clang::ASTContext *Context;
   clang::DiagnosticsEngine &Diag;
   unsigned WarnID;
 };
