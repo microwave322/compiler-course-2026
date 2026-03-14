@@ -9,7 +9,6 @@ namespace {
 
 class OverrideVisitor : public clang::RecursiveASTVisitor<OverrideVisitor> {
 public:
-
   bool VisitCXXMethodDecl(clang::CXXMethodDecl *MD) {
 
     if (MD->isImplicit())
@@ -25,9 +24,9 @@ public:
       return true;
 
     auto &Diag = MD->getASTContext().getDiagnostics();
-    unsigned WarnID = Diag.getCustomDiagID(
-      clang::DiagnosticsEngine::Warning,
-      "virtual method is not marked 'override'");
+    unsigned WarnID =
+        Diag.getCustomDiagID(clang::DiagnosticsEngine::Warning,
+                             "virtual method is not marked 'override'");
     Diag.Report(MD->getLocation(), WarnID) << MD;
 
     return true;
@@ -36,7 +35,6 @@ public:
 
 class OverrideConsumer : public clang::ASTConsumer {
 public:
-
   void HandleTranslationUnit(clang::ASTContext &Context) override {
     m_visitor.TraverseDecl(Context.getTranslationUnitDecl());
   }
