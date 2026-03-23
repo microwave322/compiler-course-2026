@@ -1,6 +1,5 @@
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Analysis/AliasAnalysis.h"
-#include "llvm/Analysis/MemoryLocation.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/PassManager.h"
@@ -9,94 +8,64 @@
 
 namespace {
 
-struct TrackedStore {
-  llvm::StoreInst *SI;
-  llvm::Value *StoredValue;
-  llvm::MemoryLocation Loc;
-};
-
 struct LoadStoreEliminationPass
     : public llvm::PassInfoMixin<LoadStoreEliminationPass> {
   llvm::PreservedAnalyses run(llvm::Function &F,
-                              llvm::FunctionAnalysisManager &FAM) {
-    llvm::AAResults &AA = FAM.getResult<llvm::AAManager>(F);
+                              llvm::FunctionAnalysisManager &) {
     bool Changed = false;
 
     for (auto &BB : F) {
-      llvm::SmallVector<TrackedStore, 16> AvailableStores;
+      llvm::DenseMap<llvm::Value *, llvm::Value *> LastStoredValue;
+      llvm::DenseMap<llvm::Value *, llvm::StoreInst *> LastStoreInst;
       llvm::SmallVector<llvm::Instruction *, 16> ToErase;
 
       for (auto &I : llvm::make_early_inc_range(BB)) {
         if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(&I)) {
           if (LI->isVolatile() || LI->isAtomic()) {
-            AvailableStores.clear();
+            LastStoredValue.clear();
+            LastStoreInst.clear();
             continue;
           }
 
-          llvm::MemoryLocation LoadLoc = llvm::MemoryLocation::get(LI);
+          llvm::Value *Ptr = LI->getPointerOperand();
 
-          for (auto It = AvailableStores.rbegin(); It != AvailableStores.rend();
-               ++It) {
-            llvm::AliasResult AR = AA.alias(It->Loc, LoadLoc);
-
-            if (AR == llvm::AliasResult::MustAlias) {
-              if (It->StoredValue->getType() == LI->getType()) {
-                LI->replaceAllUsesWith(It->StoredValue);
-                ToErase.push_back(LI);
-                Changed = true;
-              }
-              break;
-            }
-
-            if (AR != llvm::AliasResult::NoAlias) {
-              break;
-            }
+          auto It = LastStoredValue.find(Ptr);
+          if (It != LastStoredValue.end() &&
+              It->second->getType() == LI->getType()) {
+            LI->replaceAllUsesWith(It->second);
+            ToErase.push_back(LI);
+            Changed = true;
           }
 
-          for (auto &S : AvailableStores) {
-            llvm::AliasResult AR = AA.alias(S.Loc, LoadLoc);
-            if (AR != llvm::AliasResult::NoAlias)
-              S.SI = nullptr;
-          }
+          if (LastStoreInst.count(Ptr))
+            LastStoreInst[Ptr] = nullptr;
 
           continue;
         }
 
         if (auto *SI = llvm::dyn_cast<llvm::StoreInst>(&I)) {
           if (SI->isVolatile() || SI->isAtomic()) {
-            AvailableStores.clear();
+            LastStoredValue.clear();
+            LastStoreInst.clear();
             continue;
           }
 
-          llvm::MemoryLocation StoreLoc = llvm::MemoryLocation::get(SI);
-          llvm::Value *StoredVal = SI->getValueOperand();
+          llvm::Value *Ptr = SI->getPointerOperand();
 
-          for (auto It = AvailableStores.begin();
-               It != AvailableStores.end();) {
-            llvm::AliasResult AR = AA.alias(It->Loc, StoreLoc);
-
-            if (AR == llvm::AliasResult::MustAlias) {
-              if (It->SI) {
-                ToErase.push_back(It->SI);
-                Changed = true;
-              }
-              It = AvailableStores.erase(It);
-              continue;
-            }
-
-            if (AR != llvm::AliasResult::NoAlias) {
-              It->SI = nullptr;
-            }
-
-            ++It;
+          auto It = LastStoreInst.find(Ptr);
+          if (It != LastStoreInst.end() && It->second) {
+            ToErase.push_back(It->second);
+            Changed = true;
           }
 
-          AvailableStores.push_back({SI, StoredVal, StoreLoc});
+          LastStoredValue[Ptr] = SI->getValueOperand();
+          LastStoreInst[Ptr] = SI;
           continue;
         }
 
         if (I.mayReadOrWriteMemory() || I.mayHaveSideEffects()) {
-          AvailableStores.clear();
+          LastStoredValue.clear();
+          LastStoreInst.clear();
         }
       }
 
