@@ -64,7 +64,7 @@ public:
   }
 
 private:
-  bool sameValueOrSameIndexConstant(Value lhs, Value rhs) {
+  bool equalValues(Value lhs, Value rhs) {
     if (lhs == rhs)
       return true;
 
@@ -78,29 +78,26 @@ private:
   }
 
   bool haveSameBounds(scf::ForOp firstFor, scf::ForOp secondFor) {
-    return sameValueOrSameIndexConstant(firstFor.getLowerBound(),
-                                        secondFor.getLowerBound()) &&
-           sameValueOrSameIndexConstant(firstFor.getUpperBound(),
-                                        secondFor.getUpperBound()) &&
-           sameValueOrSameIndexConstant(firstFor.getStep(),
-                                        secondFor.getStep());
+    return equalValues(firstFor.getLowerBound(), secondFor.getLowerBound()) &&
+           equalValues(firstFor.getUpperBound(), secondFor.getUpperBound()) &&
+           equalValues(firstFor.getStep(), secondFor.getStep());
   }
 
-  bool hasLoopCarriedValues(scf::ForOp forOp) {
+  bool hasIterArgs(scf::ForOp forOp) {
     return !forOp.getInitArgs().empty() || forOp.getNumResults() != 0;
   }
 
-  bool valueDefinedInside(Operation *container, Value value) {
+  bool isDefinedInside(Operation *container, Value value) {
     Operation *defOp = value.getDefiningOp();
     return defOp && container->isAncestor(defOp);
   }
 
-  bool secondUsesValuesFromFirst(scf::ForOp firstFor, scf::ForOp secondFor) {
+  bool hasSSADependency(scf::ForOp firstFor, scf::ForOp secondFor) {
     bool hasDependency = false;
 
     secondFor.walk([&](Operation *op) {
       for (Value operand : op->getOperands()) {
-        if (valueDefinedInside(firstFor.getOperation(), operand)) {
+        if (isDefinedInside(firstFor.getOperation(), operand)) {
           hasDependency = true;
           return WalkResult::interrupt();
         }
@@ -111,8 +108,7 @@ private:
     return hasDependency;
   }
 
-  void collectAccessedMemRefs(Operation *op,
-                              llvm::SmallPtrSetImpl<Value> &memrefs) {
+  void collectMemRefs(Operation *op, llvm::SmallPtrSetImpl<Value> &memrefs) {
     op->walk([&](Operation *nestedOp) {
       if (auto load = dyn_cast<memref::LoadOp>(nestedOp)) {
         memrefs.insert(load.getMemRef());
@@ -126,8 +122,8 @@ private:
     llvm::SmallPtrSet<Value, 8> firstMemrefs;
     llvm::SmallPtrSet<Value, 8> secondMemrefs;
 
-    collectAccessedMemRefs(firstFor.getOperation(), firstMemrefs);
-    collectAccessedMemRefs(secondFor.getOperation(), secondMemrefs);
+    collectMemRefs(firstFor.getOperation(), firstMemrefs);
+    collectMemRefs(secondFor.getOperation(), secondMemrefs);
 
     for (Value memref : firstMemrefs) {
       if (secondMemrefs.contains(memref))
@@ -141,10 +137,10 @@ private:
     if (!haveSameBounds(firstFor, secondFor))
       return false;
 
-    if (hasLoopCarriedValues(firstFor) || hasLoopCarriedValues(secondFor))
+    if (hasIterArgs(firstFor) || hasIterArgs(secondFor))
       return false;
 
-    if (secondUsesValuesFromFirst(firstFor, secondFor))
+    if (hasSSADependency(firstFor, secondFor))
       return false;
 
     if (hasMemoryDependency(firstFor, secondFor))
